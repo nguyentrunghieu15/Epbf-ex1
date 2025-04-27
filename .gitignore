@@ -1,0 +1,5 @@
+test
+*.o
+*bpfeb.go
+*bpfel.go
+.vscode
