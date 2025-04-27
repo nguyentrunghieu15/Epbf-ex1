@@ -1,5 +1,4 @@
 //go:build ignore
-
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include "common/xdp-parse-helper.h"
@@ -31,11 +30,17 @@ struct radius_package
   __u8 apvs[256];
 };
 
+struct radiushdr
+{
+  __u8 code;
+  __u8 identifier;
+  __u16 length;
+  __u8 authenticator[16];
+};
+
 SEC("xdp")
 int radius_parser(struct xdp_md *ctx)
 {
-  char fmt3[] = "Hiro get a package";
-  bpf_trace_printk(fmt3, sizeof(fmt3));
   void *data_end = (void *)(long)ctx->data_end;
   void *data = (void *)(long)ctx->data;
 
@@ -52,7 +57,7 @@ int radius_parser(struct xdp_md *ctx)
   {
     struct ipv6hdr *ih6;
     nh_type = parse_ip6hdr(&nh, data_end, &ih6);
-    if (nh_type == bpf_htons(IPPROTO_UDP))
+    if (nh_type == IPPROTO_UDP)
     {
       goto udp;
     }
@@ -61,7 +66,7 @@ int radius_parser(struct xdp_md *ctx)
   {
     struct iphdr *iph;
     nh_type = parse_iphdr(&nh, data_end, &iph);
-    if (nh_type == bpf_htons(IPPROTO_UDP))
+    if (nh_type == IPPROTO_UDP)
     {
       goto udp;
     }
@@ -69,33 +74,35 @@ int radius_parser(struct xdp_md *ctx)
   return XDP_PASS;
 udp:
   nh_type = parse_udphdr(&nh, data_end, &udph);
-  if (nh_type == -1)
+  if (nh_type < 0)
   {
     return XDP_PASS;
   }
-  char fmt[] = "Hiro get a upd package";
-  bpf_trace_printk(fmt, sizeof(fmt));
-  if (udph->dest != bpf_htons(RADIUS_PORT_L) || udph->dest != bpf_htons(RADIUS_PORT_A))
+  if (bpf_ntohs(udph->dest) != RADIUS_PORT_L && bpf_ntohs(udph->dest) != RADIUS_PORT_A)
   {
     return XDP_PASS;
   }
-  char fmt1[] = "Hiro get a radius package";
-  bpf_trace_printk(fmt1, sizeof(fmt1));
-  struct radius_package *rpk;
-  rpk = nh.pos;
-  if (rpk + 1 > data_end)
+  struct radiushdr *radiush;
+  radiush = nh.pos;
+  if (radiush + 1 > data_end)
   {
     return XDP_PASS;
   }
-  nh.pos = rpk + 1;
-  int len;
-  len = bpf_ntohs(rpk->length) - sizeof(struct radius_package);
+  nh.pos = radiush + 1;
+  __u16 len = bpf_ntohs(radiush->length) - sizeof(struct radiushdr);
+  struct radius_package rpkdest;
+  memset(&rpkdest, 0, sizeof(rpkdest));
   if (len < 0)
   {
     return XDP_PASS;
   }
-  struct radius_package rpkdest;
-  bpf_probe_read_kernel(&rpkdest, sizeof(struct radius_package), rpk);
+  bpf_probe_read_kernel(&rpkdest, sizeof(struct radiushdr), radiush);
+  __u8 *attributies = nh.pos;
+  if (attributies + len > data_end)
+  {
+    return XDP_PASS;
+  }
+  bpf_probe_read_kernel(rpkdest.apvs, sizeof(__u8) * 256, attributies);
   bpf_perf_event_output(ctx, &radius_events, BPF_F_CURRENT_CPU, &rpkdest, sizeof(rpkdest));
   return XDP_PASS;
 }

@@ -53,7 +53,11 @@ func main() {
 	for {
 		event, err := reader.Read()
 		if err != nil {
-			fmt.Println(event.RawSample)
+			continue
 		}
+		if event.LostSamples > 0 {
+			continue
+		}
+		fmt.Println(event.RawSample)
 	}
 }
