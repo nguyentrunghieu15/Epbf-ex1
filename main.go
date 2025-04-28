@@ -9,7 +9,16 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
+	"layeh.com/radius"
 )
+
+type RadiusPackage struct {
+	Code          uint8
+	Identifier    uint8
+	Length        uint16
+	Authenticator [16]uint8
+	Apvs          [256]uint8
+}
 
 func main() {
 	// Remove resource limits for kernels <5.11.
@@ -58,6 +67,27 @@ func main() {
 		if event.LostSamples > 0 {
 			continue
 		}
-		fmt.Println(event.RawSample)
+		parseRadiusPackage(event.RawSample)
+	}
+}
+
+func parseRadiusPackage(radiusPackage []byte) {
+	packet, err := radius.Parse(radiusPackage, []byte(""))
+	if err != nil {
+		panic(err)
+	}
+
+	// Iterate over all attributes
+	for _, attr := range packet.Attributes {
+		fmt.Println(attr.Type, string(attr.Attribute))
+		if attr.Type == radius.Type(26) {
+			vendorId, vattr, err := radius.VendorSpecific(attr.Attribute)
+			if err != nil {
+				return
+			}
+			if vendorId == 1 {
+				vattrs, err := radius.ParseAttributes(attr.Attribute)
+			}
+		}
 	}
 }
